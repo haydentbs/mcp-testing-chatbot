@@ -1,25 +1,37 @@
 """
-Function handler for managing OpenAI function calling with MCP tools.
+AI function handler for integrating OpenAI with MCP tools.
 """
 import json
-import asyncio
-from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass
+import time
+from typing import Dict, List, Optional, Any, AsyncGenerator, Tuple
+from dataclasses import dataclass, field
 
 from ai.openai_client import OpenAIClient, ChatMessage
 from mcp_client.tool_executor import MCPToolExecutor, ToolExecution
 from utils.logger import logger
-from utils.helpers import format_tool_call, format_tool_result
+
+
+@dataclass 
+class ConversationTurn:
+    """Represents a complete conversation turn with tool executions."""
+    user_message: str
+    assistant_response: str
+    tool_executions: List[ToolExecution] = field(default_factory=list)
+    timestamp: float = field(default_factory=time.time)
+    thinking_time: Optional[float] = None
+    total_time: Optional[float] = None
 
 
 @dataclass
-class ConversationTurn:
-    """Represents a complete conversation turn with tool calls."""
-    user_message: str
-    assistant_response: str
-    tool_executions: List[ToolExecution]
-    success: bool
-    error: Optional[str] = None
+class AIStatus:
+    """Represents the current status of AI processing."""
+    state: str  # "idle", "thinking", "executing_tool", "responding"
+    current_activity: str
+    start_time: float
+    current_tool: Optional[str] = None
+    tool_progress: Optional[str] = None
+    tools_completed: int = 0
+    total_tools: int = 0
 
 
 class FunctionHandler:
@@ -30,6 +42,14 @@ class FunctionHandler:
         self.tool_executor = tool_executor
         self.conversation_history: List[ChatMessage] = []
         self.conversation_turns: List[ConversationTurn] = []
+        
+        # Real-time status tracking
+        self.current_status: AIStatus = AIStatus(
+            state="idle",
+            current_activity="Ready to chat",
+            start_time=time.time()
+        )
+        self.status_history: List[AIStatus] = []
         
         # System message for MCP tool usage
         self.system_message = self._create_system_message()
@@ -51,6 +71,34 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
         
         return self.openai_client.create_system_message(content)
     
+    def _update_status(self, state: str, activity: str, current_tool: Optional[str] = None, 
+                      tool_progress: Optional[str] = None, tools_completed: int = 0, total_tools: int = 0):
+        """Update the current AI status."""
+        # Archive current status
+        if hasattr(self, 'current_status'):
+            self.status_history.append(self.current_status)
+        
+        # Create new status
+        self.current_status = AIStatus(
+            state=state,
+            current_activity=activity,
+            start_time=time.time(),
+            current_tool=current_tool,
+            tool_progress=tool_progress,
+            tools_completed=tools_completed,
+            total_tools=total_tools
+        )
+        
+        logger.info(f"AI Status: {state} - {activity}")
+    
+    def get_current_status(self) -> AIStatus:
+        """Get the current AI status."""
+        return self.current_status
+    
+    def get_status_history(self) -> List[AIStatus]:
+        """Get the status history."""
+        return self.status_history
+    
     async def handle_user_message(
         self, 
         user_input: str, 
@@ -66,7 +114,11 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
         Returns:
             ConversationTurn with the complete interaction
         """
+        start_time = time.time()
         logger.info(f"Handling user message: {user_input[:100]}...")
+        
+        # Update status - starting to process
+        self._update_status("thinking", "Processing your request...")
         
         # Add user message to conversation
         user_message = self.openai_client.create_user_message(user_input)
@@ -80,8 +132,14 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
             while iteration < max_iterations:
                 iteration += 1
                 
+                # Update status - thinking
+                self._update_status("thinking", f"Analyzing request (iteration {iteration})")
+                
                 # Get available functions
                 functions = self.tool_executor.get_openai_function_definitions()
+                
+                # Update status - getting AI response
+                self._update_status("thinking", "Getting AI response...")
                 
                 # Get response from OpenAI
                 if stream:
@@ -97,13 +155,22 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
                 if not new_tool_executions:
                     break
             
+            # Update status - completing
+            self._update_status("responding", "Finalizing response...")
+            
+            thinking_time = time.time() - start_time
+            
             # Create conversation turn
             turn = ConversationTurn(
                 user_message=user_input,
                 assistant_response=assistant_response,
                 tool_executions=tool_executions,
-                success=True
+                thinking_time=thinking_time,
+                total_time=thinking_time
             )
+            
+            # Update status - completed
+            self._update_status("idle", "Ready for next message")
             
             self.conversation_turns.append(turn)
             return turn
@@ -112,13 +179,15 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
             error_msg = f"Error handling user message: {str(e)}"
             logger.error(error_msg)
             
+            # Update status - error
+            self._update_status("idle", f"Error: {error_msg}")
+            
             # Create error turn
             turn = ConversationTurn(
                 user_message=user_input,
                 assistant_response=f"I encountered an error: {error_msg}",
                 tool_executions=tool_executions,
-                success=False,
-                error=error_msg
+                thinking_time=time.time() - start_time
             )
             
             self.conversation_turns.append(turn)
@@ -145,7 +214,17 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
         
         # Execute tool calls if any
         if tool_calls:
-            for tool_call in tool_calls:
+            total_tools = len(tool_calls)
+            for i, tool_call in enumerate(tool_calls):
+                # Update status for tool execution
+                self._update_status(
+                    "executing_tool", 
+                    f"Executing tool {i+1} of {total_tools}",
+                    current_tool=tool_call["function"]["name"],
+                    tools_completed=i,
+                    total_tools=total_tools
+                )
+                
                 execution = await self._execute_tool_call(tool_call)
                 tool_executions.append(execution)
                 
@@ -166,6 +245,8 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
         """Handle streaming response from OpenAI."""
         content_parts = []
         tool_calls = None
+        
+        self._update_status("thinking", "Receiving streaming response...")
         
         async for success, chunk, chunk_tool_calls, error in self.openai_client.chat_completion_stream(
             messages=self.conversation_history,
@@ -189,7 +270,17 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
         
         # Execute tool calls if any
         if tool_calls:
-            for tool_call in tool_calls:
+            total_tools = len(tool_calls)
+            for i, tool_call in enumerate(tool_calls):
+                # Update status for tool execution
+                self._update_status(
+                    "executing_tool", 
+                    f"Executing tool {i+1} of {total_tools}",
+                    current_tool=tool_call["function"]["name"],
+                    tools_completed=i,
+                    total_tools=total_tools
+                )
+                
                 execution = await self._execute_tool_call(tool_call)
                 tool_executions.append(execution)
                 
@@ -210,6 +301,14 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
         
         logger.info(f"Executing tool call: {function_name}")
         
+        # Update status with specific tool being executed
+        self._update_status(
+            "executing_tool", 
+            f"Running {function_name}...",
+            current_tool=function_name,
+            tool_progress="Starting execution"
+        )
+        
         try:
             # Parse arguments
             if isinstance(function_args, str):
@@ -217,27 +316,63 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
             else:
                 arguments = function_args
             
+            # Update progress
+            self._update_status(
+                "executing_tool", 
+                f"Running {function_name}...",
+                current_tool=function_name,
+                tool_progress="Executing with parsed arguments"
+            )
+            
             # Execute the tool
             execution = await self.tool_executor.execute_tool_by_name(function_name, arguments)
+            
+            # Update completion status
+            status_msg = "✅ Completed successfully" if execution.success else "❌ Failed"
+            self._update_status(
+                "executing_tool", 
+                f"{function_name}: {status_msg}",
+                current_tool=function_name,
+                tool_progress=status_msg
+            )
+            
             return execution
             
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid function arguments: {e}")
+            error_msg = f"Invalid function arguments: {e}"
+            logger.error(error_msg)
+            
+            self._update_status(
+                "executing_tool", 
+                f"{function_name}: ❌ Argument parsing failed",
+                current_tool=function_name,
+                tool_progress="Failed - Invalid arguments"
+            )
+            
             return ToolExecution(
                 tool_name=function_name,
                 server_name="unknown",
                 arguments={},
                 success=False,
-                error=f"Invalid function arguments: {e}"
+                error=error_msg
             )
         except Exception as e:
+            error_msg = str(e)
             logger.error(f"Error executing tool call: {e}")
+            
+            self._update_status(
+                "executing_tool", 
+                f"{function_name}: ❌ Execution failed",
+                current_tool=function_name,
+                tool_progress=f"Failed - {error_msg}"
+            )
+            
             return ToolExecution(
                 tool_name=function_name,
                 server_name="unknown", 
                 arguments={},
                 success=False,
-                error=str(e)
+                error=error_msg
             )
     
     def _format_tool_response(self, execution: ToolExecution) -> str:
@@ -262,15 +397,23 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
                 "unique_servers_used": []
             }
         
-        successful_turns = [t for t in self.conversation_turns if t.success]
-        failed_turns = [t for t in self.conversation_turns if not t.success]
+        # Count successful turns based on whether they have any failed tool executions
+        successful_turns = []
+        failed_turns = []
+        
+        for turn in self.conversation_turns:
+            has_failures = any(not exec.success for exec in turn.tool_executions)
+            if has_failures:
+                failed_turns.append(turn)
+            else:
+                successful_turns.append(turn)
         
         all_tool_executions = []
         for turn in self.conversation_turns:
             all_tool_executions.extend(turn.tool_executions)
         
-        unique_tools = list(set(e.tool_name for e in all_tool_executions))
-        unique_servers = list(set(e.server_name for e in all_tool_executions))
+        unique_tools = list(set(exec.tool_name for exec in all_tool_executions))
+        unique_servers = list(set(exec.server_name for exec in all_tool_executions))
         
         return {
             "total_turns": len(self.conversation_turns),
@@ -282,9 +425,11 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
         }
     
     def clear_conversation(self) -> None:
-        """Clear the conversation history."""
-        self.conversation_history = [self.system_message]
+        """Clear the conversation history and reset status."""
+        self.conversation_history = [self.system_message]  # Keep system message
         self.conversation_turns = []
+        self.status_history = []
+        self._update_status("idle", "Ready to chat")
         logger.info("Cleared conversation history")
     
     def get_recent_turns(self, limit: int = 5) -> List[ConversationTurn]:
@@ -292,19 +437,10 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
         return self.conversation_turns[-limit:] if self.conversation_turns else []
     
     def export_conversation(self) -> Dict[str, Any]:
-        """Export the conversation for analysis or saving."""
+        """Export conversation data for analysis."""
         return {
-            "conversation_history": [
-                {
-                    "role": msg.role,
-                    "content": msg.content,
-                    "tool_calls": msg.tool_calls,
-                    "tool_call_id": msg.tool_call_id,
-                    "name": msg.name
-                }
-                for msg in self.conversation_history
-            ],
-            "conversation_turns": [
+            "conversation_summary": self.get_conversation_summary(),
+            "turns": [
                 {
                     "user_message": turn.user_message,
                     "assistant_response": turn.assistant_response,
@@ -320,10 +456,22 @@ Always be helpful, accurate, and explain your actions clearly to the user."""
                         }
                         for exec in turn.tool_executions
                     ],
-                    "success": turn.success,
-                    "error": turn.error
+                    "thinking_time": turn.thinking_time,
+                    "total_time": turn.total_time,
+                    "timestamp": turn.timestamp
                 }
                 for turn in self.conversation_turns
             ],
-            "summary": self.get_conversation_summary()
+            "status_history": [
+                {
+                    "state": status.state,
+                    "activity": status.current_activity,
+                    "start_time": status.start_time,
+                    "current_tool": status.current_tool,
+                    "tool_progress": status.tool_progress,
+                    "tools_completed": status.tools_completed,
+                    "total_tools": status.total_tools
+                }
+                for status in self.status_history
+            ]
         } 

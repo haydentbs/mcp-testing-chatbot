@@ -203,8 +203,6 @@ def render_server_panel(server_manager: MCPServerManager):
                     if success:
                         st.success("Disconnected!")
                         st.rerun()
-                    else:
-                        st.error("Disconnect failed")
             
             # Show Error Details button for servers with errors
             if server_info.get('has_detailed_errors', False):
@@ -272,6 +270,57 @@ def render_server_panel(server_manager: MCPServerManager):
                         st.warning("No detailed error information available for this server.")
 
 
+def render_ai_status_panel(function_handler: FunctionHandler):
+    """Render the real-time AI status panel."""
+    current_status = function_handler.get_current_status()
+    
+    # Create expandable status panel
+    with st.expander("🧠 AI Activity Monitor", expanded=False):
+        # Status indicator with color coding
+        state_colors = {
+            "idle": "🟢",
+            "thinking": "🟡", 
+            "executing_tool": "🔵",
+            "responding": "🟠"
+        }
+        
+        state_color = state_colors.get(current_status.state, "⚪")
+        st.markdown(f"**Status:** {state_color} {current_status.state.title()}")
+        st.markdown(f"**Activity:** {current_status.current_activity}")
+        
+        # Show elapsed time
+        elapsed = time.time() - current_status.start_time
+        st.markdown(f"**Elapsed:** {elapsed:.1f}s")
+        
+        # Show tool-specific information
+        if current_status.state == "executing_tool":
+            if current_status.current_tool:
+                st.markdown(f"**Tool:** {current_status.current_tool}")
+            
+            if current_status.tool_progress:
+                st.markdown(f"**Progress:** {current_status.tool_progress}")
+            
+            # Show progress bar if we have tool counts
+            if current_status.total_tools > 0:
+                progress = current_status.tools_completed / current_status.total_tools
+                st.progress(progress)
+                st.markdown(f"**Tools:** {current_status.tools_completed}/{current_status.total_tools}")
+        
+        # Show recent status history
+        status_history = function_handler.get_status_history()
+        if status_history:
+            st.markdown("**Recent Activities:**")
+            # Show last 5 activities
+            for status in status_history[-5:]:
+                elapsed_for_status = time.time() - status.start_time
+                st.markdown(f"• {status.current_activity} ({elapsed_for_status:.1f}s ago)")
+        
+        # Auto-refresh when AI is active
+        if current_status.state != "idle":
+            time.sleep(0.5)  # Small delay to prevent excessive updates
+            st.rerun()
+
+
 def render_chat_interface(function_handler: FunctionHandler):
     """Render the main chat interface."""
     st.header("💬 MCP Chat Interface")
@@ -295,6 +344,9 @@ def render_chat_interface(function_handler: FunctionHandler):
             st.rerun()
     with col3:
         streaming_enabled = st.checkbox("Streaming", value=True)
+    
+    # Real-time AI Status Panel
+    render_ai_status_panel(function_handler)
     
     # Display conversation
     chat_container = st.container()
