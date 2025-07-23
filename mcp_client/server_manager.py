@@ -2,7 +2,7 @@
 MCP Server Manager for handling server configurations and lifecycle.
 """
 import asyncio
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from dataclasses import asdict
 
 from mcp_client.client import MCPClient, MCPServer, ServerStatus
@@ -80,7 +80,8 @@ class MCPServerManager:
             "tools_count": len(server.tools),
             "tools": [{"name": t.name, "description": t.description} for t in server.tools],
             "last_error": server.last_error,
-            "connection_time": server.connection_time
+            "connection_time": server.connection_time,
+            "has_detailed_errors": bool(server.last_error or server.stderr_output or server.stdout_output)
         }
     
     def get_all_servers_info(self) -> List[Dict]:
@@ -228,4 +229,43 @@ class MCPServerManager:
             elif server.status == ServerStatus.CONNECTING:
                 summary["connecting"] += 1
         
-        return summary 
+        return summary
+    
+    def get_server_error_details(self, server_name: str) -> Optional[Dict[str, Any]]:
+        """Get detailed error information for a specific server."""
+        server = self.client.servers.get(server_name)
+        if not server:
+            return None
+        
+        # Only return error details if server is in error state or has error info
+        if server.status != ServerStatus.ERROR and not server.last_error:
+            return None
+        
+        import datetime
+        
+        error_details = {
+            "server_name": server.name,
+            "status": server.status.value,
+            "last_error": server.last_error,
+            "error_timestamp": server.error_timestamp,
+            "error_time_formatted": None,
+            "full_command": server.full_command,
+            "process_exit_code": server.process_exit_code,
+            "stderr_output": server.stderr_output,
+            "stdout_output": server.stdout_output,
+            "server_config": {
+                "command": server.command,
+                "args": server.args,
+                "env": server.env,
+                "enabled": server.enabled,
+                "description": server.description
+            }
+        }
+        
+        # Format timestamp if available
+        if server.error_timestamp:
+            error_details["error_time_formatted"] = datetime.datetime.fromtimestamp(
+                server.error_timestamp
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        
+        return error_details 

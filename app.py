@@ -63,6 +63,20 @@ st.markdown("""
         margin: 10px 0;
         background-color: #fafafa;
     }
+    
+    .error-details-section {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 5px;
+        padding: 15px;
+        margin: 10px 0;
+    }
+    
+    .error-details-header {
+        color: #856404;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -191,6 +205,71 @@ def render_server_panel(server_manager: MCPServerManager):
                         st.rerun()
                     else:
                         st.error("Disconnect failed")
+            
+            # Show Error Details button for servers with errors
+            if server_info.get('has_detailed_errors', False):
+                if st.button(f"🔍 Show Error Details", key=f"error_details_{server_info['name']}", use_container_width=True):
+                    error_details = server_manager.get_server_error_details(server_info['name'])
+                    if error_details:
+                        st.subheader(f"🚨 Error Details: {error_details['server_name']}")
+                        
+                        # Basic error info
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**Status:** {error_details['status']}")
+                            if error_details['error_time_formatted']:
+                                st.write(f"**Error Time:** {error_details['error_time_formatted']}")
+                        with col2:
+                            if error_details['process_exit_code'] is not None:
+                                st.write(f"**Exit Code:** {error_details['process_exit_code']}")
+                            if error_details['full_command']:
+                                st.write(f"**Command:** `{error_details['full_command']}`")
+                        
+                        # Main error message
+                        if error_details['last_error']:
+                            st.write("**Error Message:**")
+                            st.code(error_details['last_error'])
+                        
+                        # Process output tabs
+                        if error_details['stderr_output'] or error_details['stdout_output']:
+                            tab1, tab2 = st.tabs(["stderr", "stdout"])
+                            
+                            with tab1:
+                                if error_details['stderr_output']:
+                                    st.write("**Standard Error Output:**")
+                                    st.code(error_details['stderr_output'], language="text")
+                                else:
+                                    st.info("No stderr output captured")
+                            
+                            with tab2:
+                                if error_details['stdout_output']:
+                                    st.write("**Standard Output:**")
+                                    st.code(error_details['stdout_output'], language="text")
+                                else:
+                                    st.info("No stdout output captured")
+                        
+                        # Server configuration
+                        with st.expander("📋 Server Configuration"):
+                            st.json(error_details['server_config'])
+                        
+                        # Troubleshooting tips
+                        with st.expander("💡 Troubleshooting Tips"):
+                            st.markdown("""
+                            **Common Issues:**
+                            - **Command not found**: Make sure the command is installed and in your PATH
+                            - **Permission denied**: Check file permissions and execution rights
+                            - **Module not found**: Ensure all dependencies are installed
+                            - **Port already in use**: Check if another instance is running
+                            - **Environment variables**: Verify required environment variables are set
+                            
+                            **Debug Steps:**
+                            1. Try running the command manually in your terminal
+                            2. Check the stderr output above for specific error messages
+                            3. Verify the command path and arguments are correct
+                            4. Ensure all required dependencies are installed
+                            """)
+                    else:
+                        st.warning("No detailed error information available for this server.")
 
 
 def render_chat_interface(function_handler: FunctionHandler):

@@ -45,6 +45,12 @@ class MCPServer:
     last_error: Optional[str] = None
     process: Optional[subprocess.Popen] = None
     connection_time: Optional[float] = None
+    # Enhanced error details
+    stderr_output: Optional[str] = None
+    stdout_output: Optional[str] = None
+    process_exit_code: Optional[int] = None
+    full_command: Optional[str] = None
+    error_timestamp: Optional[float] = None
 
 
 class MCPClient:
@@ -90,6 +96,14 @@ class MCPClient:
         try:
             server.status = ServerStatus.CONNECTING
             server.last_error = None
+            # Clear previous error details
+            server.stderr_output = None
+            server.stdout_output = None
+            server.process_exit_code = None
+            server.error_timestamp = None
+            
+            # Store full command for debugging
+            server.full_command = " ".join([server.command] + server.args)
             
             with Timer() as timer:
                 # Start the MCP server process
@@ -117,6 +131,11 @@ class MCPClient:
         except Exception as e:
             server.status = ServerStatus.ERROR
             server.last_error = str(e)
+            server.error_timestamp = time.time()
+            
+            # Capture detailed error information
+            await self._capture_error_details(server, e)
+            
             logger.error(f"Failed to connect to MCP server {server_name}: {e}")
             return False
     
@@ -289,4 +308,46 @@ class MCPClient:
     async def disconnect_all(self) -> None:
         """Disconnect from all servers."""
         for server_name in list(self.servers.keys()):
-            await self.disconnect_server(server_name) 
+            await self.disconnect_server(server_name)
+    
+    async def _capture_error_details(self, server: MCPServer, exception: Exception) -> None:
+        """Capture detailed error information when server connection fails."""
+        try:
+            # Capture process output if process exists
+            if server.process:
+                # Check if process is still running
+                if server.process.poll() is None:
+                    # Process is still running, terminate it
+                    server.process.terminate()
+                    try:
+                        server.process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        server.process.kill()
+                        server.process.wait()
+                
+                # Get exit code
+                server.process_exit_code = server.process.returncode
+                
+                # Read remaining output
+                try:
+                    if server.process.stderr:
+                        stderr_data = server.process.stderr.read()
+                        if stderr_data:
+                            server.stderr_output = stderr_data.strip()
+                    
+                    if server.process.stdout:
+                        stdout_data = server.process.stdout.read()
+                        if stdout_data:
+                            server.stdout_output = stdout_data.strip()
+                
+                except Exception as read_error:
+                    logger.warning(f"Could not read process output for {server.name}: {read_error}")
+                    if not server.stderr_output:
+                        server.stderr_output = f"Error reading stderr: {read_error}"
+            else:
+                # Process was never created
+                server.stderr_output = f"Process failed to start: {exception}"
+                
+        except Exception as capture_error:
+            logger.warning(f"Error capturing detailed error info for {server.name}: {capture_error}")
+            server.stderr_output = f"Error capturing details: {capture_error}" 
