@@ -16,7 +16,7 @@ A powerful Streamlit application for testing and interacting with Model Context 
 
 1. **Clone the repository:**
 ```bash
-git clone <repository-url>
+git clone https://github.com/haydentbs/mcp-testing-chatbot.git
 cd mcp-chat-simple
 ```
 
