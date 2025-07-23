@@ -220,6 +220,19 @@ The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
         # Execute tool calls if any
         if tool_calls:
             total_tools = len(tool_calls)
+            
+            # Log that AI has decided to use tools
+            tool_names = [call["function"]["name"] for call in tool_calls]
+            logger.info(f"🤖 AI AGENT TOOL REQUEST: {total_tools} tool(s) - {', '.join(tool_names)}")
+            
+            self._update_status(
+                "executing_tool", 
+                f"🤖 AI requested {total_tools} tool(s): {', '.join(tool_names)}",
+                current_tool=None,
+                tools_completed=0,
+                total_tools=total_tools
+            )
+            
             for i, tool_call in enumerate(tool_calls):
                 # Update status for tool execution
                 self._update_status(
@@ -276,6 +289,19 @@ The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
         # Execute tool calls if any
         if tool_calls:
             total_tools = len(tool_calls)
+            
+            # Log that AI has decided to use tools
+            tool_names = [call["function"]["name"] for call in tool_calls]
+            logger.info(f"🤖 AI AGENT TOOL REQUEST (Streaming): {total_tools} tool(s) - {', '.join(tool_names)}")
+            
+            self._update_status(
+                "executing_tool", 
+                f"🤖 AI requested {total_tools} tool(s): {', '.join(tool_names)}",
+                current_tool=None,
+                tools_completed=0,
+                total_tools=total_tools
+            )
+            
             for i, tool_call in enumerate(tool_calls):
                 # Update status for tool execution
                 self._update_status(
@@ -304,14 +330,14 @@ The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
         function_name = tool_call["function"]["name"]
         function_args = tool_call["function"]["arguments"]
         
-        logger.info(f"Executing tool call: {function_name}")
+        logger.info(f"🔧 AI TOOL REQUEST: {function_name}")
         
         # Update status with specific tool being executed
         self._update_status(
             "executing_tool", 
-            f"Running {function_name}...",
+            f"🔧 Tool Request: {function_name}",
             current_tool=function_name,
-            tool_progress="Starting execution"
+            tool_progress="Preparing tool request"
         )
         
         try:
@@ -321,19 +347,31 @@ The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
             else:
                 arguments = function_args
             
+            # Log the tool request details
+            logger.info(f"📋 Tool Arguments: {json.dumps(arguments, indent=2)}")
+            
             # Update progress
             self._update_status(
                 "executing_tool", 
-                f"Running {function_name}...",
+                f"🚀 Executing {function_name}...",
                 current_tool=function_name,
-                tool_progress="Executing with parsed arguments"
+                tool_progress="Sending request to MCP server"
             )
             
             # Execute the tool
+            logger.info(f"⚡ Calling MCP tool: {function_name}")
             execution = await self.tool_executor.execute_tool_by_name(function_name, arguments)
             
-            # Update completion status
-            status_msg = "✅ Completed successfully" if execution.success else "❌ Failed"
+            # Update completion status with detailed logging
+            if execution.success:
+                status_msg = "✅ Completed successfully"
+                logger.info(f"✅ Tool {function_name} executed successfully")
+                if execution.result:
+                    logger.info(f"📤 Tool Result: {str(execution.result)[:200]}{'...' if len(str(execution.result)) > 200 else ''}")
+            else:
+                status_msg = "❌ Failed"
+                logger.error(f"❌ Tool {function_name} failed: {execution.error}")
+            
             self._update_status(
                 "executing_tool", 
                 f"{function_name}: {status_msg}",
@@ -345,7 +383,7 @@ The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
             
         except json.JSONDecodeError as e:
             error_msg = f"Invalid function arguments: {e}"
-            logger.error(error_msg)
+            logger.error(f"❌ Tool Request Failed - {function_name}: {error_msg}")
             
             self._update_status(
                 "executing_tool", 
@@ -363,7 +401,7 @@ The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
             )
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Error executing tool call: {e}")
+            logger.error(f"❌ Tool Execution Error - {function_name}: {error_msg}")
             
             self._update_status(
                 "executing_tool", 

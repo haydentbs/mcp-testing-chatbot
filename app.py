@@ -626,15 +626,99 @@ def render_chat_interface(function_handler: FunctionHandler):
             "timestamp": timestamp
         })
         
-        # Show processing status
+        # Show processing status with enhanced AI status information
         with st.status("🤖 Processing your message...", expanded=True) as status:
-            st.write("🧠 AI is thinking...")
+            # Show initial thinking status
+            st.write("🧠 **AI is analyzing your request...**")
             
             try:
-                # Handle the user message
+                # Handle the user message with enhanced status tracking
                 turn = async_to_sync(function_handler.handle_user_message)(user_input, stream=streaming_enabled)
                 
-                st.write("✅ Response generated!")
+                # Get final AI status to show what happened during processing
+                final_status = function_handler.get_current_status()
+                recent_history = function_handler.get_status_history()
+                
+                # Show processing summary
+                st.write("✅ **Response generated successfully!**")
+                
+                # Display tool execution details if any tools were used
+                if turn.tool_executions:
+                    st.write("🛠️ **Tool Execution Summary:**")
+                    
+                    # Show overview first
+                    total_tools = len(turn.tool_executions)
+                    successful_tools = [exec for exec in turn.tool_executions if exec.success]
+                    failed_tools = [exec for exec in turn.tool_executions if not exec.success]
+                    
+                    overview_parts = []
+                    if successful_tools:
+                        overview_parts.append(f"✅ {len(successful_tools)} successful")
+                    if failed_tools:
+                        overview_parts.append(f"❌ {len(failed_tools)} failed")
+                    
+                    st.info(f"📊 **Total:** {total_tools} tool(s) executed - {', '.join(overview_parts)}")
+                    
+                    # Show individual tool executions in a simple list
+                    for i, exec in enumerate(turn.tool_executions, 1):
+                        status_icon = "✅" if exec.success else "❌"
+                        execution_time = f" ({exec.execution_time:.2f}s)" if exec.execution_time else ""
+                        
+                        # Show each tool execution
+                        st.write(f"  **{i}.** {status_icon} **{exec.tool_name}** on *{exec.server_name}*{execution_time}")
+                        
+                        # Show tool arguments in a compact format
+                        if exec.arguments:
+                            args_str = ", ".join([f"{k}={v}" for k, v in exec.arguments.items() if len(str(v)) < 50])
+                            if len(args_str) > 100:
+                                args_str = args_str[:100] + "..."
+                            st.write(f"     📋 **Args:** {args_str}")
+                        
+                        # Show result or error
+                        if exec.success and exec.result:
+                            result_str = str(exec.result)
+                            if len(result_str) > 150:
+                                result_str = result_str[:150] + "..."
+                            st.write(f"     📤 **Result:** {result_str}")
+                        elif not exec.success and exec.error:
+                            st.write(f"     ❌ **Error:** {exec.error}")
+                
+                # Show AI processing stages from status history
+                if recent_history:
+                    st.write("---")
+                    st.write("🔍 **AI Processing Stages:**")
+                    
+                    # Show last few status updates
+                    relevant_statuses = [s for s in recent_history[-10:] if s.state != "idle"]
+                    if relevant_statuses:
+                        for i, status_item in enumerate(relevant_statuses, 1):
+                            elapsed = time.time() - status_item.start_time
+                            state_icon = {
+                                "thinking": "🧠",
+                                "executing_tool": "🔧", 
+                                "responding": "💬"
+                            }.get(status_item.state, "⚡")
+                            
+                            stage_info = f"  **{i}.** {state_icon} {status_item.current_activity}"
+                            
+                            # Add tool-specific information
+                            if status_item.current_tool:
+                                stage_info += f" → **{status_item.current_tool}**"
+                            if status_item.tool_progress:
+                                stage_info += f" *({status_item.tool_progress})*"
+                            
+                            # Add progress information if available
+                            if status_item.total_tools > 0 and status_item.tools_completed >= 0:
+                                progress_info = f" [{status_item.tools_completed}/{status_item.total_tools}]"
+                                stage_info += progress_info
+                            
+                            st.write(stage_info)
+                    
+                    # Show summary of what the AI did
+                    if turn.tool_executions:
+                        st.write("**Summary:** AI analyzed your request, decided to use tools, and executed them to provide a response.")
+                    else:
+                        st.write("**Summary:** AI analyzed your request and provided a direct response without using any tools.")
                 
                 # Add assistant response
                 response_timestamp = time.strftime("%H:%M:%S")
@@ -647,16 +731,24 @@ def render_chat_interface(function_handler: FunctionHandler):
                 # Store the conversation turn
                 st.session_state.conversation_turns.append(turn)
                 
-                # Show tool execution summary
+                # Show final summary
                 if turn.tool_executions:
                     executed_tools = [exec.tool_name for exec in turn.tool_executions if exec.success]
+                    failed_tools = [exec.tool_name for exec in turn.tool_executions if not exec.success]
+                    
+                    summary_parts = []
                     if executed_tools:
-                        st.write(f"🛠️ Executed tools: {', '.join(executed_tools)}")
+                        summary_parts.append(f"✅ {len(executed_tools)} successful")
+                    if failed_tools:
+                        summary_parts.append(f"❌ {len(failed_tools)} failed")
+                    
+                    if summary_parts:
+                        st.info(f"🛠️ **Tools used:** {', '.join(summary_parts)}")
                 
                 status.update(label="✅ Message processed successfully!", state="complete")
                 
             except Exception as e:
-                st.write(f"❌ Error: {str(e)}")
+                st.write(f"❌ **Error during processing:** {str(e)}")
                 status.update(label="❌ Error processing message", state="error")
                 
                 # Add error message to chat
