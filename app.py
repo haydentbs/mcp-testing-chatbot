@@ -283,21 +283,35 @@ def render_server_panel(server_manager: MCPServerManager):
             st.metric("Connected", status_summary["connected"])
         with col2:
             st.metric("Total", status_summary["total"])
+        
+        # Auto-connection info
+        if status_summary["total"] > 0:
+            if status_summary["connected"] == status_summary["total"]:
+                st.sidebar.info("ℹ️ All servers auto-connected on startup")
+            elif status_summary["connected"] > 0:
+                st.sidebar.info("ℹ️ Servers auto-connect on startup")
+            else:
+                st.sidebar.warning("⚠️ Auto-connection failed - check configurations below")
+        else:
+            st.sidebar.info("ℹ️ No servers configured - add servers via config files")
     
-    # Refresh servers button
+    # Manual server controls
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button("🔄 Refresh", use_container_width=True):
-            with st.spinner("Refreshing servers..."):
+        if st.button("🔄 Reconnect All", use_container_width=True):
+            with st.spinner("Reconnecting servers..."):
                 results = async_to_sync(server_manager.refresh_servers)()
                 
                 success_count = sum(1 for success in results.values() if success)
                 total_count = len(results)
                 
                 if success_count > 0:
-                    st.sidebar.success(f"Connected to {success_count}/{total_count} servers")
+                    if success_count == total_count:
+                        st.sidebar.success(f"✅ All {success_count} servers connected")
+                    else:
+                        st.sidebar.success(f"✅ {success_count}/{total_count} servers connected")
                 else:
-                    st.sidebar.error("Failed to connect to any servers")
+                    st.sidebar.error("❌ Failed to connect to any servers")
     
     with col2:
         if st.button("🆕 Reload Config", use_container_width=True):
@@ -306,14 +320,7 @@ def render_server_panel(server_manager: MCPServerManager):
                 st.cache_resource.clear()
                 st.rerun()
     
-    # Initialize servers if not done
-    if not server_manager._initialized:
-        with st.spinner("Initializing MCP servers..."):
-            success = async_to_sync(server_manager.initialize)()
-            if success:
-                st.sidebar.success("MCP servers initialized")
-            else:
-                st.sidebar.error("Failed to initialize MCP servers")
+    # Servers are now auto-initialized when the app starts
     
     # Display server list
     st.sidebar.subheader("Server Status")
@@ -960,6 +967,37 @@ def main():
         else:
             st.error(f"❌ OpenAI connection failed: {message}")
             st.stop()
+    
+    # Auto-initialize and connect MCP servers
+    with st.spinner("Connecting to MCP servers..."):
+        # Initialize server manager if not done
+        if not server_manager._initialized:
+            init_success = async_to_sync(server_manager.initialize)()
+            if init_success:
+                logger.info("MCP server manager initialized")
+            else:
+                st.warning("⚠️ Failed to initialize MCP server manager")
+        
+        # Auto-connect to all enabled servers
+        results = async_to_sync(server_manager.refresh_servers)()
+        
+        # Show connection summary
+        success_count = sum(1 for success in results.values() if success)
+        total_count = len(results)
+        
+        if success_count > 0:
+            if success_count == total_count:
+                st.success(f"✅ Connected to all {success_count} MCP servers")
+            else:
+                st.success(f"✅ Connected to {success_count}/{total_count} MCP servers")
+                if success_count < total_count:
+                    failed_servers = [name for name, success in results.items() if not success]
+                    st.warning(f"⚠️ Failed to connect to: {', '.join(failed_servers)}")
+        else:
+            if total_count > 0:
+                st.warning("⚠️ No MCP servers connected - check server configurations in sidebar")
+            else:
+                st.info("ℹ️ No MCP servers configured")
     
     # Render server panel in sidebar
     render_server_panel(server_manager)
