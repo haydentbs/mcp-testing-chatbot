@@ -1,3 +1,4 @@
+
 """
 Main Streamlit application for the MCP Server Tester.
 """
@@ -77,7 +78,162 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 10px;
     }
+    
+    /* Chat Interface Styling */
+    .chat-container {
+        max-height: 600px;
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background-color: #fafafa;
+    }
+    
+    /* Chat messages container styling */
+    #chat-messages-container {
+        max-height: 500px;
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        background-color: #fafafa;
+        scroll-behavior: smooth;
+    }
+    
+    #chat-messages-container::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    #chat-messages-container::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 10px;
+    }
+    
+    #chat-messages-container::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 10px;
+    }
+    
+    #chat-messages-container::-webkit-scrollbar-thumb:hover {
+        background: #a8a8a8;
+    }
+    
+    /* Improve chat message styling */
+    [data-testid="chat-message"] {
+        margin-bottom: 1.5rem !important;
+        padding: 0.75rem !important;
+        border-radius: 10px !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+    }
+    
+    /* User messages styling */
+    [data-testid="chat-message"][data-testid*="user"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        margin-left: 2rem !important;
+    }
+    
+    /* Assistant messages styling */
+    [data-testid="chat-message"]:not([data-testid*="user"]) {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+        background: #ffffff !important;
+        border: 1px solid #e1e5e9 !important;
+        margin-right: 2rem !important;
+    }
+    
+    /* Chat input styling */
+    .stChatInput > div > div > div > div {
+        border-radius: 20px !important;
+        border: 2px solid #e1e5e9 !important;
+    }
+    
+    .stChatInput > div > div > div > div:focus-within {
+        border-color: #667eea !important;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+    }
+    
+    /* Status indicators */
+    .status-processing {
+        background: linear-gradient(90deg, #667eea, #764ba2);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-weight: 500;
+    }
+    
+    /* Tool execution styling */
+    .tool-execution-summary {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 0.75rem;
+        margin: 0.5rem 0;
+    }
+    
+    /* Auto-scroll styling */
+    div[data-testid="stVerticalBlock"] > div::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    div[data-testid="stVerticalBlock"] > div::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 10px;
+    }
+    
+    div[data-testid="stVerticalBlock"] > div::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 10px;
+    }
+    
+    div[data-testid="stVerticalBlock"] > div::-webkit-scrollbar-thumb:hover {
+        background: #a8a8a8;
+    }
+    
+    /* Remove old unused styles */
+    .chat-message, .user-message, .assistant-message, .chat-input-container, .message-timestamp {
+        display: none;
+    }
 </style>
+
+<script>
+    // Auto-scroll to bottom function
+    function scrollToBottom() {
+        window.scrollTo({
+            top: document.body.scrollHeight,
+            behavior: 'smooth'
+        });
+    }
+    
+    // Auto-scroll when new messages are added
+    function setupAutoScroll() {
+        // Watch for changes in the main content area
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                    // Small delay to ensure content is rendered
+                    setTimeout(scrollToBottom, 100);
+                }
+            });
+        });
+        
+        // Start observing
+        const targetNode = document.querySelector('[data-testid="stVerticalBlock"]');
+        if (targetNode) {
+            observer.observe(targetNode, {
+                childList: true,
+                subtree: true
+            });
+        }
+    }
+    
+    // Initialize auto-scroll when page loads
+    document.addEventListener('DOMContentLoaded', setupAutoScroll);
+    
+    // Also setup when Streamlit reruns
+    window.addEventListener('load', setupAutoScroll);
+</script>
 """, unsafe_allow_html=True)
 
 
@@ -247,25 +403,25 @@ def render_server_panel(server_manager: MCPServerManager):
                                     st.info("No stdout output captured")
                         
                         # Server configuration
-                        with st.expander("📋 Server Configuration"):
-                            st.json(error_details['server_config'])
+                        st.markdown("**📋 Server Configuration:**")
+                        st.json(error_details['server_config'])
                         
                         # Troubleshooting tips
-                        with st.expander("💡 Troubleshooting Tips"):
-                            st.markdown("""
-                            **Common Issues:**
-                            - **Command not found**: Make sure the command is installed and in your PATH
-                            - **Permission denied**: Check file permissions and execution rights
-                            - **Module not found**: Ensure all dependencies are installed
-                            - **Port already in use**: Check if another instance is running
-                            - **Environment variables**: Verify required environment variables are set
-                            
-                            **Debug Steps:**
-                            1. Try running the command manually in your terminal
-                            2. Check the stderr output above for specific error messages
-                            3. Verify the command path and arguments are correct
-                            4. Ensure all required dependencies are installed
-                            """)
+                        st.markdown("**💡 Troubleshooting Tips:**")
+                        st.markdown("""
+                        **Common Issues:**
+                        - **Command not found**: Make sure the command is installed and in your PATH
+                        - **Permission denied**: Check file permissions and execution rights
+                        - **Module not found**: Ensure all dependencies are installed
+                        - **Port already in use**: Check if another instance is running
+                        - **Environment variables**: Verify required environment variables are set
+                        
+                        **Debug Steps:**
+                        1. Try running the command manually in your terminal
+                        2. Check the stderr output above for specific error messages
+                        3. Verify the command path and arguments are correct
+                        4. Ensure all required dependencies are installed
+                        """)
                     else:
                         st.warning("No detailed error information available for this server.")
 
@@ -322,7 +478,7 @@ def render_ai_status_panel(function_handler: FunctionHandler):
 
 
 def render_chat_interface(function_handler: FunctionHandler):
-    """Render the main chat interface."""
+    """Render the main chat interface with improved UI."""
     st.header("💬 MCP Chat Interface")
     
     # Initialize session state for chat
@@ -332,137 +488,294 @@ def render_chat_interface(function_handler: FunctionHandler):
     if "conversation_turns" not in st.session_state:
         st.session_state.conversation_turns = []
     
-    # Chat controls
-    col1, col2, col3 = st.columns([3, 1, 1])
+    # Chat controls row
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
     with col1:
         st.subheader("Ask me anything!")
     with col2:
-        if st.button("🧹 Clear Chat"):
+        if st.button("🧹 Clear Chat", use_container_width=True):
             st.session_state.messages = []
             st.session_state.conversation_turns = []
             function_handler.clear_conversation()
             st.rerun()
     with col3:
         streaming_enabled = st.checkbox("Streaming", value=True)
+    with col4:
+        auto_scroll = st.checkbox("Auto-scroll", value=True)
     
     # Real-time AI Status Panel
     render_ai_status_panel(function_handler)
     
-    # Display conversation
-    chat_container = st.container()
+    # Chat History Container with fixed height and scrolling
+    st.markdown("### 💬 Chat History")
     
-    with chat_container:
-        for i, message in enumerate(st.session_state.messages):
-            with st.chat_message(message["role"]):
-                if message["role"] == "user":
-                    st.write(message["content"])
-                elif message["role"] == "assistant":
-                    st.write(message["content"])
+    # Create a scrollable container for chat messages
+    with st.container():
+        # If there are no messages, show a welcome message
+        if not st.session_state.messages:
+            st.info("""
+            👋 **Welcome to MCP Chat!**
+            
+            Start a conversation by typing a message below. I can help you with various tasks using the connected MCP servers.
+            
+            **Try asking:**
+            - "List files in the workspace"
+            - "Create a new file with some content" 
+            - "Search for information about Python"
+            - "Show me the git status"
+            """)
+        else:
+            # Create a container with fixed height for scrolling
+            # Add a unique identifier for the chat container
+            st.markdown('<div id="chat-messages-container">', unsafe_allow_html=True)
+            chat_container = st.container()
+            
+            with chat_container:
+                # Display messages in reverse order (newest first for better UX)
+                for i, message in enumerate(st.session_state.messages):
+                    timestamp = message.get("timestamp", "")
                     
-                    # Show tool executions if any
-                    if i < len(st.session_state.conversation_turns):
-                        turn = st.session_state.conversation_turns[i]
-                        if turn.tool_executions:
-                            with st.expander(f"🛠️ Tool Executions ({len(turn.tool_executions)})"):
-                                for exec in turn.tool_executions:
-                                    status_icon = "✅" if exec.success else "❌"
-                                    time_str = f"({exec.execution_time:.2f}s)" if exec.execution_time else ""
+                    # Use Streamlit's native chat message components
+                    with st.chat_message(message["role"]):
+                        if message["role"] == "user":
+                            st.markdown(f"**You** _{timestamp}_")
+                            st.write(message["content"])
+                        
+                        elif message["role"] == "assistant":
+                            st.markdown(f"**🤖 Assistant** _{timestamp}_")
+                            st.write(message["content"])
+                            
+                            # Calculate the correct conversation turn index
+                            # Count how many assistant messages we've seen up to this point
+                            assistant_message_count = sum(1 for msg in st.session_state.messages[:i+1] if msg["role"] == "assistant")
+                            turn_index = assistant_message_count - 1  # Convert to 0-based index
+                            
+                            # Show tool executions if any for this turn
+                            if turn_index < len(st.session_state.conversation_turns):
+                                turn = st.session_state.conversation_turns[turn_index]
+                                if turn.tool_executions:
+                                    # Summary of tool executions
+                                    success_count = sum(1 for exec in turn.tool_executions if exec.success)
+                                    total_count = len(turn.tool_executions)
                                     
-                                    st.write(f"{status_icon} **{exec.tool_name}** on *{exec.server_name}* {time_str}")
+                                    if success_count == total_count:
+                                        status_color = "🟢"
+                                        status_text = "All successful"
+                                    elif success_count > 0:
+                                        status_color = "🟡"
+                                        status_text = f"{success_count}/{total_count} successful"
+                                    else:
+                                        status_color = "🔴"
+                                        status_text = "All failed"
                                     
-                                    if exec.arguments:
-                                        with st.expander("Arguments"):
-                                            st.json(exec.arguments)
-                                    
-                                    if exec.success and exec.result:
-                                        with st.expander("Result"):
-                                            if isinstance(exec.result, (dict, list)):
-                                                st.json(exec.result)
-                                            else:
-                                                st.code(str(exec.result))
-                                    elif exec.error:
-                                        st.error(f"Error: {exec.error}")
+                                    with st.expander(f"🛠️ Tool Executions ({total_count}) {status_color} {status_text}", expanded=False):
+                                        for j, exec in enumerate(turn.tool_executions):
+                                            status_icon = "✅" if exec.success else "❌"
+                                            time_str = f"({exec.execution_time:.2f}s)" if exec.execution_time else ""
+                                            
+                                            st.markdown(f"**{j+1}.** {status_icon} **{exec.tool_name}** on *{exec.server_name}* {time_str}")
+                                            
+                                            # Create columns for arguments and results
+                                            exec_col1, exec_col2 = st.columns(2)
+                                            
+                                            with exec_col1:
+                                                if exec.arguments:
+                                                    st.markdown("**📋 Arguments:**")
+                                                    st.json(exec.arguments)
+                                            
+                                            with exec_col2:
+                                                if exec.success and exec.result:
+                                                    st.markdown("**📤 Result:**")
+                                                    if isinstance(exec.result, (dict, list)):
+                                                        st.json(exec.result)
+                                                    else:
+                                                        st.code(str(exec.result))
+                                                elif exec.error:
+                                                    st.markdown("**❌ Error:**")
+                                                    st.error(exec.error)
+                                            
+                                            if j < len(turn.tool_executions) - 1:
+                                                st.divider()
+            
+            # Close the chat container div
+            st.markdown('</div>', unsafe_allow_html=True)
     
-    # Chat input
-    if prompt := st.chat_input("Type your message here..."):
+    # Fixed Chat Input Section
+    st.markdown("---")
+    st.markdown("### 📝 Send Message")
+    
+    # Chat input using columns for better layout
+    input_col1, input_col2 = st.columns([5, 1])
+    
+    with input_col1:
+        # Use chat input for the main message
+        user_input = st.chat_input("Type your message here... Press Enter to send!")
+    
+    with input_col2:
+        st.write("")  # Spacer to align with chat input height
+    
+    # Handle chat input
+    if user_input and user_input.strip():
+        # Add timestamp to messages
+        timestamp = time.strftime("%H:%M:%S")
+        
         # Add user message to chat
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.messages.append({
+            "role": "user", 
+            "content": user_input,
+            "timestamp": timestamp
+        })
         
-        # Display user message immediately
-        with st.chat_message("user"):
-            st.write(prompt)
-        
-        # Get AI response
-        with st.chat_message("assistant"):
-            if streaming_enabled:
-                # Streaming response
-                message_placeholder = st.empty()
-                full_response = ""
+        # Show processing status
+        with st.status("🤖 Processing your message...", expanded=True) as status:
+            st.write("🧠 AI is thinking...")
+            
+            try:
+                # Handle the user message
+                turn = async_to_sync(function_handler.handle_user_message)(user_input, stream=streaming_enabled)
                 
-                with st.spinner("Thinking..."):
-                    # Handle the user message
-                    turn = async_to_sync(function_handler.handle_user_message)(prompt, stream=False)
-                    full_response = turn.assistant_response
+                st.write("✅ Response generated!")
+                
+                # Add assistant response
+                response_timestamp = time.strftime("%H:%M:%S")
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": turn.assistant_response,
+                    "timestamp": response_timestamp
+                })
+                
+                # Store the conversation turn
+                st.session_state.conversation_turns.append(turn)
+                
+                # Show tool execution summary
+                if turn.tool_executions:
+                    executed_tools = [exec.tool_name for exec in turn.tool_executions if exec.success]
+                    if executed_tools:
+                        st.write(f"🛠️ Executed tools: {', '.join(executed_tools)}")
+                
+                status.update(label="✅ Message processed successfully!", state="complete")
+                
+            except Exception as e:
+                st.write(f"❌ Error: {str(e)}")
+                status.update(label="❌ Error processing message", state="error")
+                
+                # Add error message to chat
+                error_timestamp = time.strftime("%H:%M:%S")
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": f"I encountered an error: {str(e)}",
+                    "timestamp": error_timestamp
+                })
+        
+        # Trigger auto-scroll to bottom if enabled
+        if auto_scroll:
+            st.markdown("""
+            <script>
+                // Force scroll to chat container bottom after message processing
+                setTimeout(function() {
+                    // Find the chat messages container
+                    const chatContainer = document.getElementById('chat-messages-container');
+                    if (chatContainer) {
+                        // Scroll the chat container to show the latest message
+                        chatContainer.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'end',
+                            inline: 'nearest' 
+                        });
+                    }
                     
-                    # Add to session state
-                    st.session_state.conversation_turns.append(turn)
-                
-                # Display the response
-                message_placeholder.write(full_response)
-                
-                # Show tool executions
-                if turn.tool_executions:
-                    with st.expander(f"🛠️ Tool Executions ({len(turn.tool_executions)})"):
-                        for exec in turn.tool_executions:
-                            status_icon = "✅" if exec.success else "❌"
-                            time_str = f"({exec.execution_time:.2f}s)" if exec.execution_time else ""
-                            
-                            st.write(f"{status_icon} **{exec.tool_name}** on *{exec.server_name}* {time_str}")
-                            
-                            if exec.arguments:
-                                with st.expander("Arguments"):
-                                    st.json(exec.arguments)
-                            
-                            if exec.success and exec.result:
-                                with st.expander("Result"):
-                                    if isinstance(exec.result, (dict, list)):
-                                        st.json(exec.result)
-                                    else:
-                                        st.code(str(exec.result))
-                            elif exec.error:
-                                st.error(f"Error: {exec.error}")
-            else:
-                # Non-streaming response
-                with st.spinner("Thinking..."):
-                    turn = async_to_sync(function_handler.handle_user_message)(prompt, stream=False)
-                    st.session_state.conversation_turns.append(turn)
-                
-                st.write(turn.assistant_response)
-                
-                # Show tool executions
-                if turn.tool_executions:
-                    with st.expander(f"🛠️ Tool Executions ({len(turn.tool_executions)})"):
-                        for exec in turn.tool_executions:
-                            status_icon = "✅" if exec.success else "❌"
-                            time_str = f"({exec.execution_time:.2f}s)" if exec.execution_time else ""
-                            
-                            st.write(f"{status_icon} **{exec.tool_name}** on *{exec.server_name}* {time_str}")
-                            
-                            if exec.arguments:
-                                with st.expander("Arguments"):
-                                    st.json(exec.arguments)
-                            
-                            if exec.success and exec.result:
-                                with st.expander("Result"):
-                                    if isinstance(exec.result, (dict, list)):
-                                        st.json(exec.result)
-                                    else:
-                                        st.code(str(exec.result))
-                            elif exec.error:
-                                st.error(f"Error: {exec.error}")
+                    // Also find the last chat message and scroll to it
+                    const chatMessages = document.querySelectorAll('[data-testid="chat-message"]');
+                    if (chatMessages.length > 0) {
+                        const lastMessage = chatMessages[chatMessages.length - 1];
+                        lastMessage.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'nearest',
+                            inline: 'nearest' 
+                        });
+                    }
+                }, 500);
+            </script>
+            """, unsafe_allow_html=True)
         
-        # Add assistant response to chat
-        st.session_state.messages.append({"role": "assistant", "content": turn.assistant_response})
+        # Always rerun to update the chat
+        st.rerun()
+    
+    # Show helpful tips when no messages
+    if len(st.session_state.messages) == 0:
+        st.markdown("---")
+        
+        tip_col1, tip_col2 = st.columns(2)
+        
+        with tip_col1:
+            st.markdown("""
+            ### 💡 Example Commands
+            - `"List files in the workspace"`
+            - `"Create a new file called hello.txt"`
+            - `"Search for Python tutorials"`
+            - `"Show me the git status"`
+            - `"Count words in a text file"`
+            """)
+        
+        with tip_col2:
+            st.markdown("""
+            ### ✨ Features
+            - 🔄 Real-time tool execution monitoring
+            - 🔍 Detailed error reporting for failed servers
+            - ⚡ Streaming responses for faster interaction
+            - 📊 Export conversation history
+            - 📱 Auto-scroll to latest messages
+            """)
+    
+    # Add scroll anchor at the bottom for auto-scroll functionality
+    st.markdown('<div id="chat-bottom-anchor"></div>', unsafe_allow_html=True)
+    
+    # Enhanced auto-scroll script for better reliability
+    if auto_scroll and len(st.session_state.messages) > 0:
+        st.markdown("""
+        <script>
+            // Multiple scroll strategies targeting the chat container
+            function scrollToChatBottom() {
+                // Strategy 1: Scroll to the chat messages container
+                const chatContainer = document.getElementById('chat-messages-container');
+                if (chatContainer) {
+                    chatContainer.scrollIntoView({ 
+                        behavior: 'smooth', 
+                        block: 'end',
+                        inline: 'nearest' 
+                    });
+                }
+                
+                // Strategy 2: Scroll to the last chat message
+                setTimeout(() => {
+                    const chatMessages = document.querySelectorAll('[data-testid="chat-message"]');
+                    if (chatMessages.length > 0) {
+                        const lastMessage = chatMessages[chatMessages.length - 1];
+                        lastMessage.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'center',
+                            inline: 'nearest' 
+                        });
+                    }
+                }, 200);
+                
+                // Strategy 3: Scroll to the bottom anchor for final positioning
+                setTimeout(() => {
+                    const anchor = document.getElementById('chat-bottom-anchor');
+                    if (anchor) {
+                        anchor.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'start',
+                            inline: 'nearest' 
+                        });
+                    }
+                }, 400);
+            }
+            
+            // Execute scroll
+            scrollToChatBottom();
+        </script>
+        """, unsafe_allow_html=True)
 
 
 def render_analytics_tab(function_handler: FunctionHandler, tool_executor: MCPToolExecutor):

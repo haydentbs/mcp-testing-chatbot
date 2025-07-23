@@ -3,6 +3,7 @@ MCP Client implementation for connecting to and communicating with MCP servers.
 """
 import asyncio
 import json
+import os
 import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -106,8 +107,11 @@ class MCPClient:
             server.full_command = " ".join([server.command] + server.args)
             
             with Timer() as timer:
-                # Start the MCP server process
-                env = {**server.env} if server.env else None
+                # Start the MCP server process with proper environment inheritance
+                env = os.environ.copy()  # Start with current environment (includes PATH)
+                if server.env:
+                    env.update(server.env)  # Add server-specific environment variables
+                
                 server.process = subprocess.Popen(
                     [server.command] + server.args,
                     stdin=subprocess.PIPE,

@@ -5,6 +5,7 @@ import json
 import time
 from typing import Dict, List, Optional, Any, AsyncGenerator, Tuple
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from ai.openai_client import OpenAIClient, ChatMessage
 from mcp_client.tool_executor import MCPToolExecutor, ToolExecution
@@ -57,7 +58,7 @@ class FunctionHandler:
     
     def _create_system_message(self) -> ChatMessage:
         """Create the system message that explains MCP tool usage."""
-        content = """You are a helpful AI assistant with access to various tools through MCP (Model Context Protocol) servers. 
+        content = f"""You are a helpful AI assistant with access to various tools through MCP (Model Context Protocol) servers. 
 
 When a user asks you to perform tasks, you can:
 1. Use available tools to accomplish the task
@@ -67,7 +68,11 @@ When a user asks you to perform tasks, you can:
 
 Available tools will be provided dynamically based on connected MCP servers. Each tool description includes the server name in brackets [server_name].
 
-Always be helpful, accurate, and explain your actions clearly to the user."""
+If you are saving a file, ensure you save it at the file path "workspace/FILE_NAME.EXTENSION"
+
+Always be helpful, accurate, and explain your actions clearly to the user.
+
+The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
         
         return self.openai_client.create_system_message(content)
     
