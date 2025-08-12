@@ -72,7 +72,9 @@ If you are saving a file, ensure you save it at the file path "workspace/FILE_NA
 
 Always be helpful, accurate, and explain your actions clearly to the user.
 
-The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}"""
+The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.
+
+If the user asks about an event which has happened outside of your context window, then you should use the search tool to research about the event/topic."""
         
         return self.openai_client.create_system_message(content)
     
