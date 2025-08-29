@@ -32,6 +32,30 @@ class OpenAIClient:
         self.max_tokens = settings.openai_max_tokens
         self.temperature = settings.openai_temperature
         
+        # Request deduplication
+        self._active_requests = {}
+        self._request_lock = asyncio.Lock()
+        
+    def _create_request_hash(self, messages: List[ChatMessage], functions: Optional[List[Dict]] = None) -> str:
+        """Create a hash for request deduplication."""
+        import hashlib
+        
+        # Create a deterministic hash based on messages and functions
+        content = ""
+        for msg in messages:
+            content += f"{msg.role}:{msg.content or ''}"
+            if msg.tool_calls:
+                content += str(msg.tool_calls)
+        
+        if functions:
+            # Only include function names and descriptions for hash (ignore full schemas)
+            func_content = ""
+            for func in functions:
+                func_content += f"{func.get('name', '')}:{func.get('description', '')}"
+            content += func_content
+        
+        return hashlib.md5(content.encode()).hexdigest()
+        
     async def chat_completion(
         self,
         messages: List[ChatMessage],

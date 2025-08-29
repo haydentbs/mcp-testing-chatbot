@@ -1,6 +1,7 @@
 """
 AI function handler for integrating OpenAI with MCP tools.
 """
+import asyncio
 import json
 import time
 from typing import Dict, List, Optional, Any, AsyncGenerator, Tuple
@@ -52,13 +53,20 @@ class FunctionHandler:
         )
         self.status_history: List[AIStatus] = []
         
-        # System message for MCP tool usage
+        # Caching for efficiency
+        self._cached_functions = None
+        self._functions_cache_time = 0
+        self._cache_duration = 30  # Cache functions for 30 seconds
+        self._request_lock = asyncio.Lock()
+        
+        # System message for MCP tool usage (static timestamp to enable caching)
         self.system_message = self._create_system_message()
         self.conversation_history.append(self.system_message)
     
     def _create_system_message(self) -> ChatMessage:
         """Create the system message that explains MCP tool usage."""
-        content = f"""You are a helpful AI assistant with access to various tools through MCP (Model Context Protocol) servers. 
+        # Use static content to enable better caching (no dynamic timestamp)
+        content = """You are a helpful AI assistant with access to various tools through MCP (Model Context Protocol) servers. 
 
 When a user asks you to perform tasks, you can:
 1. Use available tools to accomplish the task
@@ -72,11 +80,25 @@ If you are saving a file, ensure you save it at the file path "workspace/FILE_NA
 
 Always be helpful, accurate, and explain your actions clearly to the user.
 
-The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}.
-
 If the user asks about an event which has happened outside of your context window, then you should use the search tool to research about the event/topic."""
         
         return self.openai_client.create_system_message(content)
+    
+    def _get_cached_functions(self) -> List[Dict]:
+        """Get cached function definitions or refresh if stale."""
+        current_time = time.time()
+        
+        # Check if cache is still valid
+        if (self._cached_functions is not None and 
+            current_time - self._functions_cache_time < self._cache_duration):
+            return self._cached_functions
+        
+        # Refresh cache
+        self._cached_functions = self.tool_executor.get_openai_function_definitions()
+        self._functions_cache_time = current_time
+        logger.debug(f"Refreshed function cache with {len(self._cached_functions)} functions")
+        
+        return self._cached_functions
     
     def _update_status(self, state: str, activity: str, current_tool: Optional[str] = None, 
                       tool_progress: Optional[str] = None, tools_completed: int = 0, total_tools: int = 0):
@@ -121,84 +143,87 @@ If the user asks about an event which has happened outside of your context windo
         Returns:
             ConversationTurn with the complete interaction
         """
-        start_time = time.time()
-        logger.info(f"Handling user message: {user_input[:100]}...")
-        
-        # Update status - starting to process
-        self._update_status("thinking", "Processing your request...")
-        
-        # Add user message to conversation
-        user_message = self.openai_client.create_user_message(user_input)
-        self.conversation_history.append(user_message)
-        
-        tool_executions = []
-        max_iterations = 5  # Prevent infinite loops
-        iteration = 0
-        
-        try:
-            while iteration < max_iterations:
-                iteration += 1
+        # Use a lock to prevent concurrent requests
+        async with self._request_lock:
+            start_time = time.time()
+            logger.info(f"Handling user message: {user_input[:100]}...")
+            
+            # Update status - starting to process
+            self._update_status("thinking", "Processing your request...")
+            
+            # Add user message to conversation
+            user_message = self.openai_client.create_user_message(user_input)
+            self.conversation_history.append(user_message)
+            
+            tool_executions = []
+            max_iterations = 5  # Prevent infinite loops
+            iteration = 0
+            
+            try:
+                while iteration < max_iterations:
+                    iteration += 1
+                    
+                    # Update status - thinking
+                    self._update_status("thinking", f"Analyzing request (iteration {iteration})")
+                    
+                    # Get available functions (cached)
+                    functions = self._get_cached_functions()
+                    
+                    # Update status - getting AI response
+                    self._update_status("thinking", "Getting AI response...")
+                    self._update_status("thinking", "Receiving streaming response...")
+                    
+                    # Get response from OpenAI
+                    if stream:
+                        # Handle streaming response
+                        assistant_response, new_tool_executions = await self._handle_streaming_response(functions)
+                    else:
+                        # Handle non-streaming response  
+                        assistant_response, new_tool_executions = await self._handle_non_streaming_response(functions)
                 
-                # Update status - thinking
-                self._update_status("thinking", f"Analyzing request (iteration {iteration})")
+                    tool_executions.extend(new_tool_executions)
+                    
+                    # If no tool calls were made, we're done
+                    if not new_tool_executions:
+                        break
                 
-                # Get available functions
-                functions = self.tool_executor.get_openai_function_definitions()
+                # Update status - completing
+                self._update_status("responding", "Finalizing response...")
                 
-                # Update status - getting AI response
-                self._update_status("thinking", "Getting AI response...")
+                thinking_time = time.time() - start_time
                 
-                # Get response from OpenAI
-                if stream:
-                    # Handle streaming response
-                    assistant_response, new_tool_executions = await self._handle_streaming_response(functions)
-                else:
-                    # Handle non-streaming response  
-                    assistant_response, new_tool_executions = await self._handle_non_streaming_response(functions)
+                # Create conversation turn
+                turn = ConversationTurn(
+                    user_message=user_input,
+                    assistant_response=assistant_response,
+                    tool_executions=tool_executions,
+                    thinking_time=thinking_time,
+                    total_time=thinking_time
+                )
                 
-                tool_executions.extend(new_tool_executions)
+                # Update status - completed
+                self._update_status("idle", "Ready for next message")
                 
-                # If no tool calls were made, we're done
-                if not new_tool_executions:
-                    break
-            
-            # Update status - completing
-            self._update_status("responding", "Finalizing response...")
-            
-            thinking_time = time.time() - start_time
-            
-            # Create conversation turn
-            turn = ConversationTurn(
-                user_message=user_input,
-                assistant_response=assistant_response,
-                tool_executions=tool_executions,
-                thinking_time=thinking_time,
-                total_time=thinking_time
-            )
-            
-            # Update status - completed
-            self._update_status("idle", "Ready for next message")
-            
-            self.conversation_turns.append(turn)
-            return turn
-            
-        except Exception as e:
-            error_msg = f"Error handling user message: {str(e)}"
-            logger.error(error_msg)
-            
-            # Update status - error
-            self._update_status("idle", f"Error: {error_msg}")
-            
-            # Create error turn
-            turn = ConversationTurn(
-                user_message=user_input,
-                assistant_response=f"I encountered an error: {error_msg}",
-                tool_executions=tool_executions,
-                thinking_time=time.time() - start_time
-            )
-            
-            self.conversation_turns.append(turn)
-            return turn
+                self.conversation_turns.append(turn)
+                return turn
+                
+            except Exception as e:
+                error_msg = f"Error handling user message: {str(e)}"
+                logger.error(error_msg)
+                
+                # Update status - error
+                self._update_status("idle", f"Error: {error_msg}")
+                
+                # Create error turn
+                turn = ConversationTurn(
+                    user_message=user_input,
+                    assistant_response=f"I encountered an error: {error_msg}",
+                    tool_executions=tool_executions,
+                    thinking_time=time.time() - start_time
+                )
+                
+                self.conversation_turns.append(turn)
+                return turn
     
     async def _handle_non_streaming_response(
         self, 

@@ -45,22 +45,113 @@ class MCPServerManager:
         
         results = {}
         
-        # Disconnect all servers first
-        await self.client.disconnect_all()
+        # Get list of servers to connect/disconnect
+        servers_to_connect = []
+        servers_to_disconnect = []
         
-        # Connect enabled servers
         for server_name, server in self.client.servers.items():
             if server.enabled:
-                success = await self.client.connect_server(server_name)
-                results[server_name] = success
+                if server.status != ServerStatus.CONNECTED:
+                    servers_to_connect.append(server_name)
+                results[server_name] = True  # Will be updated after connection attempt
             else:
+                if server.status == ServerStatus.CONNECTED:
+                    servers_to_disconnect.append(server_name)
                 results[server_name] = False
+        
+        # Disconnect servers that should be disabled (gracefully)
+        for server_name in servers_to_disconnect:
+            await self.client.disconnect_server(server_name)
+        
+        # Connect enabled servers one by one with delay to prevent overwhelming
+        for i, server_name in enumerate(servers_to_connect):
+            if i > 0:
+                # Add small delay between connections to prevent overwhelming the system
+                await asyncio.sleep(0.1)
+            
+            success = await self.client.connect_server(server_name)
+            results[server_name] = success
+            
+            if not success:
+                logger.warning(f"Failed to connect to server {server_name} during refresh")
         
         return results
     
+    async def startup_connect_servers(self) -> Dict[str, bool]:
+        """Connect to servers during startup with optimized sequence."""
+        # Prevent concurrent startup sequences
+        if hasattr(self, '_startup_in_progress') and self._startup_in_progress:
+            logger.warning("Startup connection sequence already in progress, skipping...")
+            return {}
+        
+        self._startup_in_progress = True
+        
+        try:
+            if not self._initialized:
+                await self.initialize()
+            
+            results = {}
+            
+            # Get enabled servers
+            enabled_servers = [
+                (name, server) for name, server in self.client.servers.items() 
+                if server.enabled
+            ]
+            
+            if not enabled_servers:
+                return results
+            
+            logger.info(f"Starting connection to {len(enabled_servers)} enabled servers...")
+            
+            # Connect to servers one by one with spacing
+            for i, (server_name, server) in enumerate(enabled_servers):
+                if i > 0:
+                    # Add delay between connections to prevent overwhelming
+                    await asyncio.sleep(0.3)  # Increased delay
+                
+                logger.info(f"Connecting to server {i+1}/{len(enabled_servers)}: {server_name}")
+                success = await self.connect_server(server_name)
+                results[server_name] = success
+                
+                if success:
+                    logger.info(f"✅ Successfully connected to {server_name}")
+                else:
+                    logger.warning(f"❌ Failed to connect to {server_name}")
+            
+            # Set disabled servers as false
+            for server_name, server in self.client.servers.items():
+                if not server.enabled:
+                    results[server_name] = False
+            
+            return results
+            
+        finally:
+            self._startup_in_progress = False
+    
     async def connect_server(self, server_name: str) -> bool:
-        """Connect to a specific server."""
-        return await self.client.connect_server(server_name)
+        """Connect to a specific server with retry logic."""
+        max_retries = 2
+        retry_delay = 1.0
+        
+        for attempt in range(max_retries + 1):
+            try:
+                success = await self.client.connect_server(server_name)
+                if success:
+                    return True
+                
+                if attempt < max_retries:
+                    logger.info(f"Connection attempt {attempt + 1} failed for {server_name}, retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 1.5  # Exponential backoff
+                
+            except Exception as e:
+                logger.error(f"Connection attempt {attempt + 1} failed for {server_name}: {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 1.5
+        
+        logger.error(f"Failed to connect to {server_name} after {max_retries + 1} attempts")
+        return False
     
     async def disconnect_server(self, server_name: str) -> bool:
         """Disconnect from a specific server."""

@@ -94,6 +94,15 @@ class MCPClient:
             logger.info(f"Server {server_name} is disabled")
             return False
         
+        # If already connected, skip
+        if server.status == ServerStatus.CONNECTED and server.process and server.process.poll() is None:
+            logger.info(f"Server {server_name} is already connected")
+            return True
+        
+        # Clean up any existing process first
+        if server.process:
+            await self._cleanup_server_process(server)
+        
         try:
             server.status = ServerStatus.CONNECTING
             server.last_error = None
@@ -118,8 +127,16 @@ class MCPClient:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    env=env
+                    env=env,
+                    bufsize=0  # Unbuffered to prevent pipe issues
                 )
+                
+                # Wait a moment for process to start
+                await asyncio.sleep(0.1)
+                
+                # Check if process started successfully
+                if server.process.poll() is not None:
+                    raise Exception(f"Process failed to start, exit code: {server.process.returncode}")
                 
                 # Initialize connection with the server
                 await self._initialize_connection(server)
@@ -150,13 +167,7 @@ class MCPClient:
             return False
         
         try:
-            if server.process:
-                server.process.terminate()
-                try:
-                    server.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    server.process.kill()
-                server.process = None
+            await self._cleanup_server_process(server)
             
             server.status = ServerStatus.DISCONNECTED
             server.tools = []
@@ -228,21 +239,35 @@ class MCPClient:
         if not server.process or not server.process.stdin:
             raise Exception("Server process not available")
         
-        # Send request
-        request_str = json.dumps(request) + "\n"
-        server.process.stdin.write(request_str)
-        server.process.stdin.flush()
+        # Check if process is still alive
+        if server.process.poll() is not None:
+            raise Exception(f"Server process has exited with code {server.process.returncode}")
         
-        # Read response (if expecting one)
-        if "id" in request:
-            response_str = server.process.stdout.readline()
-            if response_str:
-                try:
-                    return json.loads(response_str.strip())
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse response: {e}")
-        
-        return None
+        try:
+            # Send request
+            request_str = json.dumps(request) + "\n"
+            server.process.stdin.write(request_str)
+            server.process.stdin.flush()
+            
+            # Read response (if expecting one)
+            if "id" in request:
+                # Set a timeout for reading response
+                response_str = server.process.stdout.readline()
+                if response_str:
+                    try:
+                        return json.loads(response_str.strip())
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse response from {server.name}: {e}")
+                        logger.error(f"Raw response: {response_str[:200]}...")
+                else:
+                    logger.warning(f"No response received from {server.name}")
+            
+            return None
+            
+        except BrokenPipeError:
+            raise Exception("Broken pipe - server process may have crashed")
+        except OSError as e:
+            raise Exception(f"OS error during communication: {e}")
     
     async def execute_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> Tuple[bool, Any, Optional[str]]:
         """Execute a tool on the specified MCP server."""
@@ -310,9 +335,16 @@ class MCPClient:
                 await self.connect_server(server_name)
     
     async def disconnect_all(self) -> None:
-        """Disconnect from all servers."""
+        """Disconnect from all servers gracefully."""
+        # Create tasks for all disconnections to run concurrently
+        disconnect_tasks = []
         for server_name in list(self.servers.keys()):
-            await self.disconnect_server(server_name)
+            task = asyncio.create_task(self.disconnect_server(server_name))
+            disconnect_tasks.append(task)
+        
+        # Wait for all disconnections to complete
+        if disconnect_tasks:
+            await asyncio.gather(*disconnect_tasks, return_exceptions=True)
     
     async def _capture_error_details(self, server: MCPServer, exception: Exception) -> None:
         """Capture detailed error information when server connection fails."""
@@ -354,4 +386,39 @@ class MCPClient:
                 
         except Exception as capture_error:
             logger.warning(f"Error capturing detailed error info for {server.name}: {capture_error}")
-            server.stderr_output = f"Error capturing details: {capture_error}" 
+            server.stderr_output = f"Error capturing details: {capture_error}"
+    
+    async def _cleanup_server_process(self, server: MCPServer) -> None:
+        """Safely clean up a server process."""
+        if not server.process:
+            return
+        
+        try:
+            # Close stdin first to signal shutdown
+            if server.process.stdin and not server.process.stdin.closed:
+                server.process.stdin.close()
+            
+            # Give process time to shutdown gracefully
+            try:
+                server.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                # Force terminate if it doesn't shutdown gracefully
+                server.process.terminate()
+                try:
+                    server.process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    # Last resort - kill the process
+                    logger.warning(f"Force killing server process {server.name}")
+                    server.process.kill()
+                    server.process.wait()
+            
+            # Close remaining pipes
+            if server.process.stdout and not server.process.stdout.closed:
+                server.process.stdout.close()
+            if server.process.stderr and not server.process.stderr.closed:
+                server.process.stderr.close()
+            
+        except Exception as e:
+            logger.warning(f"Error during process cleanup for {server.name}: {e}")
+        finally:
+            server.process = None 

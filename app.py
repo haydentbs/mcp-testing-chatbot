@@ -316,8 +316,12 @@ def render_server_panel(server_manager: MCPServerManager):
     with col2:
         if st.button("🆕 Reload Config", use_container_width=True):
             with st.spinner("Reloading configuration..."):
-                # Clear the cache and reinitialize
+                # Clear the cache and session state to force re-initialization
                 st.cache_resource.clear()
+                if "servers_initialized" in st.session_state:
+                    del st.session_state.servers_initialized
+                if "initial_connection_results" in st.session_state:
+                    del st.session_state.initial_connection_results
                 st.rerun()
     
     # Servers are now auto-initialized when the app starts
@@ -952,6 +956,8 @@ def main():
     st.markdown("*Test and interact with MCP servers using OpenAI's GPT models*")
     st.markdown('</div>', unsafe_allow_html=True)
     
+
+    
     # Initialize components
     openai_client, server_manager, tool_executor, function_handler = initialize_components()
     
@@ -968,36 +974,57 @@ def main():
             st.error(f"❌ OpenAI connection failed: {message}")
             st.stop()
     
-    # Auto-initialize and connect MCP servers
-    with st.spinner("Connecting to MCP servers..."):
-        # Initialize server manager if not done
-        if not server_manager._initialized:
-            init_success = async_to_sync(server_manager.initialize)()
-            if init_success:
-                logger.info("MCP server manager initialized")
-            else:
-                st.warning("⚠️ Failed to initialize MCP server manager")
-        
-        # Auto-connect to all enabled servers
-        results = async_to_sync(server_manager.refresh_servers)()
-        
-        # Show connection summary
-        success_count = sum(1 for success in results.values() if success)
-        total_count = len(results)
-        
-        if success_count > 0:
-            if success_count == total_count:
-                st.success(f"✅ Connected to all {success_count} MCP servers")
-            else:
-                st.success(f"✅ Connected to {success_count}/{total_count} MCP servers")
-                if success_count < total_count:
-                    failed_servers = [name for name, success in results.items() if not success]
-                    st.warning(f"⚠️ Failed to connect to: {', '.join(failed_servers)}")
+    # Auto-initialize and connect MCP servers (only once per session)
+    # Use a lock mechanism to prevent concurrent initialization
+    if "servers_initialized" not in st.session_state:
+        if "initializing_servers" not in st.session_state:
+            st.session_state.initializing_servers = True
+            
+            with st.spinner("Connecting to MCP servers..."):
+                try:
+                    # Initialize server manager if not done
+                    if not server_manager._initialized:
+                        init_success = async_to_sync(server_manager.initialize)()
+                        if init_success:
+                            logger.info("MCP server manager initialized")
+                        else:
+                            st.warning("⚠️ Failed to initialize MCP server manager")
+                    
+                    # Auto-connect to all enabled servers with improved startup sequence
+                    results = async_to_sync(server_manager.startup_connect_servers)()
+                    
+                    # Store results in session state
+                    st.session_state.servers_initialized = True
+                    st.session_state.initial_connection_results = results
+                    
+                    # Show connection summary
+                    success_count = sum(1 for success in results.values() if success)
+                    total_count = len(results)
+                    
+                    if success_count > 0:
+                        if success_count == total_count:
+                            st.success(f"✅ Connected to all {success_count} MCP servers")
+                        else:
+                            st.success(f"✅ Connected to {success_count}/{total_count} MCP servers")
+                            if success_count < total_count:
+                                failed_servers = [name for name, success in results.items() if not success]
+                                st.warning(f"⚠️ Failed to connect to: {', '.join(failed_servers)}")
+                    else:
+                        if total_count > 0:
+                            st.warning("⚠️ No MCP servers connected - check server configurations in sidebar")
+                        else:
+                            st.info("ℹ️ No MCP servers configured")
+                            
+                finally:
+                    # Always clear the initializing flag
+                    if "initializing_servers" in st.session_state:
+                        del st.session_state.initializing_servers
+                        
         else:
-            if total_count > 0:
-                st.warning("⚠️ No MCP servers connected - check server configurations in sidebar")
-            else:
-                st.info("ℹ️ No MCP servers configured")
+            # If already initializing, show a waiting message
+            st.info("🔄 Initializing MCP servers, please wait...")
+            time.sleep(0.5)
+            st.rerun()
     
     # Render server panel in sidebar
     render_server_panel(server_manager)
