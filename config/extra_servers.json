@@ -1,14 +1,1 @@
-{
-    "name": "spotify",
-    "description": "Spotify integration for accessing recently played tracks and music data",
-    "command": "/opt/anaconda3/envs/mcp-test/bin/python3",
-    "args": ["/Users/haydentibbals/Documents/repos/mcp-servers/spotify/server.py"],
-    "enabled": false,
-      "env": {
-      
-        "SPOTIPY_CLIENT_ID": "---",
-        "SPOTIPY_CLIENT_SECRET": "---"
-      
-    }
-  
-}
+
