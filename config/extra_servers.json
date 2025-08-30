@@ -6,8 +6,8 @@
     "enabled": false,
       "env": {
       
-        "SPOTIPY_CLIENT_ID": "d6f685ba9c5b4942bdd8d97966b2fab4",
-        "SPOTIPY_CLIENT_SECRET": "e9d915881fcb431b9f8a1b4dec45a95d"
+        "SPOTIPY_CLIENT_ID": "---",
+        "SPOTIPY_CLIENT_SECRET": "---"
       
     }
   
